@@ -19,7 +19,6 @@ import java.util.List;
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
     private static final String API_URL = "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=350133&provinceId=0&pageSize=100&isVerify=1&termLimits=0&pageNo=";
-    private static final String APP_TOKEN = "AT_d5lMZuERp9jApFZ4zWfBUvfG65jK55XF";
     private static final ObjectMapper objectMapper = new ObjectMapper();
     private static final List<String> resultList = new ArrayList<>();
     private static final List<List<String>> JsonList = new ArrayList<>();
@@ -27,6 +26,7 @@ public class Main {
     ;
 
     public static void main(String[] args) {
+
         for (int i = 1; i <= 70; i++) {
             String recentWinningData = getRecentResult(API_URL + i);
             parseJson(recentWinningData);
