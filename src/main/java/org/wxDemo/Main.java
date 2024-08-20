@@ -27,7 +27,7 @@ public class Main {
 
     public static void main(String[] args) {
 
-        for (int i = 1; i <= 70; i++) {
+        for (int i = 1; i <= 100; i++) {
             String recentWinningData = getRecentResult(API_URL + i);
             parseJson(recentWinningData);
         }
@@ -209,28 +209,38 @@ public class Main {
             switch(number){
                 case 0:
                     count0++;
+                    break;
                 case 1:
                     count1++;
+                    break;
                 case 2:
                     count2++;
+                    break;
                 case 3:
                     count3++;
+                    break;
                 case 4:
                     count4++;
+                    break;
                 case 5:
                     count5++;
+                    break;
                 case 6:
                     count6++;
+                    break;
                 case 7:
                     count7++;
+                    break;
                 case 8:
                     count8++;
+                    break;
                 case 9:
                     count9++;
+                    break;
             }
         }
         List<Integer> countList = new ArrayList<>(10);
-        countList.add(count0, count1);
+        countList.add(count0);
         countList.add(count1);
         countList.add(count2);
         countList.add(count3);
