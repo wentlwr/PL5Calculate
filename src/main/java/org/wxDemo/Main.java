@@ -13,8 +13,15 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.DecimalFormat;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
@@ -23,7 +30,9 @@ public class Main {
     private static final List<String> resultList = new ArrayList<>();
     private static final List<List<String>> JsonList = new ArrayList<>();
     private static final List<String> NumList = new ArrayList<>();
-    ;
+
+    //配置前 N 个月统计
+    private static final Integer BeforeMonth = 7;
 
     public static void main(String[] args) {
 
@@ -32,6 +41,7 @@ public class Main {
             parseJson(recentWinningData);
         }
         JsonList.add(resultList);
+        getHosMonNumber();
         calculate(JsonList);
         writeToExcel();
         MaxCount();
@@ -253,6 +263,72 @@ public class Main {
        getMaxCount(countList);
     }
 
+    /**
+     * 获取历史月份出现数字的占比
+     */
+    public static  void getHosMonNumber(){
+        // 获取当前年月的组合
+        YearMonth currentYearMonth = YearMonth.now();
+        int dayNumber = LocalDate.now().getDayOfMonth();
+        int now = LocalDateTime.now().getHour();
+        if (now < 21){
+            dayNumber -= 1;
+        }
+        for(int i = 0; i < BeforeMonth ;i++) {
+            YearMonth yearMonth1 = currentYearMonth.minusMonths(i);
+            int dayNum = yearMonth1.lengthOfMonth();
+            dayNumber += dayNum;
+        }
+        // 获取前 n 个月的数据
+        List<String> beforeMonthRes = resultList.subList(0, Math.min(dayNumber, resultList.size()));
+        ArrayList<Integer> resList = new ArrayList<>(beforeMonthRes.size());
+        for (String string : beforeMonthRes) {
+            int firstNumber = getFirstNumber(string);
+            if (firstNumber == -1){
+                throw  new RuntimeException("数据有误");
+            }
+            resList.add(firstNumber);
+        }
+        Map<Integer, Integer> countMap = new HashMap<>(10);
+        for (int number : resList) {
+            countMap.put(number, countMap.getOrDefault(number, 0) + 1);
+        }
+        int totalNumbers = resList.size();
+        for (Map.Entry<Integer, Integer> entry : countMap.entrySet()) {
+            int count = entry.getValue();
+            double percentage = ((double) count / totalNumbers) * 100;
+            System.out.printf("数字 %d 出现了 %d 次，占总数的 %.2f%%%n", entry.getKey(), count, percentage);
+        }
+
+    }
+
+    /**
+     * 获取字符串前一个数字
+     * @param str
+     * @return int
+     */
+    public static int getFirstNumber(String str) {
+        Pattern pattern = Pattern.compile("\\d");
+        Matcher matcher = pattern.matcher(str);
+        if (matcher.find()) {
+            return Integer.parseInt(matcher.group());
+        } else {
+            return -1;
+        }
+    }
+//
+//    public static void main(String[] args) {
+//
+//        for (int i = 1; i <= 100; i++) {
+//            String recentWinningData = getRecentResult(API_URL + i);
+//            parseJson(recentWinningData);
+//        }
+//        JsonList.add(resultList);
+//        getHosMonNumber();
+//        calculate(JsonList);
+//        writeToExcel();
+//        MaxCount();
+//    }
     private static void getMaxCount(List<Integer> countList) {
         int max = 0;
         for (int i = 0; i < countList.size(); i++) {
