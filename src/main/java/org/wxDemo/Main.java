@@ -1,17 +1,15 @@
 package org.wxDemo;
 
 import com.alibaba.excel.EasyExcel;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.io.IOException;
 import java.text.DecimalFormat;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -20,118 +18,142 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
-    private static final String API_URL = "https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=350133&provinceId=0&pageSize=100&isVerify=1&termLimits=0&pageNo=";
-    private static final ObjectMapper objectMapper = new ObjectMapper();
     private static final List<String> resultList = new ArrayList<>();
-    private static final List<List<String>> JsonList = new ArrayList<>();
-    private static final List<String> NumList = new ArrayList<>();
+    private static JsonNode rootNode;
 
     //配置前 N 个月统计
-    private static final Integer BeforeMonth = 7;
+    private static final Integer BeforeMonth = 10;
 
-    public static void main(String[] args) {
+    private static final ExecutorService executorService = Executors.newFixedThreadPool(11);
 
-        for (int i = 1; i <= 100; i++) {
-            String recentWinningData = getRecentResult(API_URL + i);
-            parseJson(recentWinningData);
+
+    public static void main(String[] args) throws ExecutionException, InterruptedException {
+
+        // 页码范围
+        int[][] pageRanges = {
+                {1, 10},
+                {11, 20},
+                {21, 30},
+                {31, 40},
+                {41, 50},
+                {51, 60},
+                {61, 70},
+                {71, 80},
+                {81, 90},
+                {91, 100}
+        };
+        List<CompletableFuture<List<String>>> futures = new ArrayList<>();
+        long startTime = System.currentTimeMillis();
+        // 创建并启动所有任务
+        for (int[] range : pageRanges) {
+            CompletableFuture<List<String>> future = CompletableFuture.supplyAsync(() -> {
+                RecentResult recentResult = new RecentResult(range[0], range[1]);
+                return recentResult.call();
+            }, executorService);
+            futures.add(future);
         }
-        JsonList.add(resultList);
+        // 收集结果并保持顺序
+        ArrayList<String> countsList = new ArrayList<>();
+        for (CompletableFuture<List<String>> future : futures) {
+            countsList.addAll(future.get());
+        }
+        long endTime = System.currentTimeMillis();
+        System.out.println("执行总耗时" + (endTime - startTime));
+        countsList.forEach(Main::parseJson);
+        Thread thread = new Thread(Main::writeToExcel);
+        thread.start();
+
+        executorService.shutdown();
         getHosMonNumber();
-        calculate(JsonList);
-        writeToExcel();
+        calculate(resultList);
         MaxCount();
     }
 
-
-    /*
-    发送请求，获取近期中奖数据
-     */
-    public static String getRecentResult(String url) {
-        StringBuilder content = new StringBuilder();
-        try {
-            // 创建URL对象
-            URL getUrl = new URL(url);
-
-            // 打开连接
-            HttpURLConnection connection = (HttpURLConnection) getUrl.openConnection();
-
-            // 设置请求方法为GET
-            connection.setRequestMethod("GET");
-
-            // 设置不使用缓存
-            connection.setUseCaches(false);
-            // 发送请求并获取响应码
-            int responseCode = connection.getResponseCode();
-
-            // 检查HTTP响应是否成功
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                // 读取响应流
-                BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-                String inputLine;
-                while ((inputLine = in.readLine()) != null) {
-                    content.append(inputLine);
-                }
-                in.close();
-            } else {
-                logger.error("GET recent result response failed");
-            }
-
-            // 关闭连接
-            connection.disconnect();
-        } catch (Exception e) {
-            logger.error("Get recent result error", e);
-        }
-        return content.toString();
-    }
+   public static String checkJson(String jsonStr) {
+           ObjectMapper objectMapper = new ObjectMapper();
+           try {
+               rootNode = objectMapper.readTree(jsonStr);
+               if (rootNode.isObject()) {
+                   return "obj";
+               } else if (rootNode.isArray()) {
+                   return "array";
+               }
+               // 继续为字符串、数字、布尔值和null添加检查
+           } catch (IOException e) {
+               e.printStackTrace();
+           }
+           return "error";
+   }
 
     /*
     解析返回的中奖数据
      */
-    public static List<String> parseJson(String jsonStr) {
-        JsonNode rootNode;
-        try {
-            rootNode = objectMapper.readTree(jsonStr);
-        } catch (JsonProcessingException e) {
-            logger.error("Parse json error", e);
-            throw new RuntimeException(e);
+    public static void parseJson(String jsonStr) {
+        String s = checkJson(jsonStr);
+        JsonNode jsonNode;
+        if ("obj".equals(s)) {
+             jsonNode = rootNode.get("value").get("list");
+             jsonToNode(jsonNode);
         }
-        JsonNode listNode = rootNode.get("value").get("list");
-        for (JsonNode node : listNode) {
-            JsonNode jsonNode = node.get("lotteryDrawResult");
-            if (jsonNode.isNull()) {
-                break;
-            } else {
-                resultList.add(jsonNode.toString());
+        if ("array".equals(s)){
+            JSONArray jsonArray = JSONObject.parseArray(jsonStr);
+            List<JsonNode> list = JSONObject.parseArray(jsonArray.toJSONString(), JsonNode.class);
+            jsonToNode(list);
+        }
+    }
+
+    /**
+     * json 数据类型转换
+     * @param t t
+     * @param <T> T
+     */
+    public static<T extends Iterable<JsonNode>> void jsonToNode(T t){
+        if(t instanceof JsonNode){
+            for (JsonNode node : t) {
+                JsonNode jsonNode = node.get("lotteryDrawResult");
+                if (jsonNode.isNull()) {
+                    break;
+                } else {
+                    String jsonString = jsonNode.toString();
+                    resultList.add(jsonString);
+                }
             }
         }
-        return resultList;
+        if (t instanceof List){
+            for (JsonNode node : t) {
+                JsonNode jsonNode = node.get("lotteryDrawResult");
+                if (jsonNode.isNull()) {
+                    break;
+                } else {
+                    resultList.add(jsonNode.toString());
+                }
+            }
+        }
     }
 
     /*
      * 计算连续大/小天数，判断是否打奖，并发送微信通知
      */
-    public static void calculate(List<List<String>> list) {
-        if (list.isEmpty()) {
+    public static void calculate(List<String> strings) {
+        if (strings.isEmpty()) {
             logger.error("数据列表为空");
             return;
-        }
-        for (List<String> strings : list) {
-            for (String s : strings) {
-                s.replaceAll("^\"|\"$", "");
-                NumList.add(s);
-            }
         }
         int bigMaxCount = 0;
         int littleMaxCount = 0;
 
         int bigCount = 0;
         int littleCount = 0;
-        int maxIndex=0;
+        int maxIndex = 0;
         int minIndex = 0;
         int bigNum = 0;
         int littleNum = 0;
@@ -144,32 +166,32 @@ public class Main {
         int oushuMaxCount = 0;
         int oushuIndex = 0;
         boolean isBig;
-        for (int i = 0; i < NumList.size(); i++) {
-            int number = Integer.parseInt(NumList.get(i).replaceAll("^\"|\"$", "").split(" ")[0]);
+        for (int i = 0; i < resultList.size(); i++) {
+            int number = Integer.parseInt(resultList.get(i).replaceAll("^\"|\"$", "").split(" ")[0]);
             isBig = number >= 5;
-            if(isBig){
+            if (isBig) {
                 bigNum++;
-            }else{
+            } else {
                 littleNum++;
             }
             //奇偶个数计数
             int jiOu = number % 2;
-            if(jiOu ==0){
+            if (jiOu == 0) {
                 oushu++;
                 oushuCount++;
-                if(jishuCount > jishuMaxCount){
+                if (jishuCount > jishuMaxCount) {
                     jishuMaxCount = jishuCount;
                     jishuIndex = i;
                 }
                 jishuCount = 0;
-            }else{
+            } else {
                 jishu++;
                 jishuCount++;
-                if(oushuCount > oushuMaxCount){
+                if (oushuCount > oushuMaxCount) {
                     oushuMaxCount = oushuCount;
                     oushuIndex = i;
                 }
-                oushuCount=0;
+                oushuCount = 0;
             }
             //大小号个数计数
             if (isBig) {
@@ -188,12 +210,12 @@ public class Main {
                 bigCount = 0;
             }
         }
-        System.out.println("最高连续大号为" + bigMaxCount + "个，在第"+(maxIndex-9)+"个数据附近开始");
-        System.out.println("最高连续小号为" + littleMaxCount + "个,在第"+(minIndex-9)+"个数据附近开始");
-        System.out.println("最高连续奇数为" + jishuMaxCount + "个，在第"+(jishuIndex-9)+"个数据附近开始");
-        System.out.println("最高连续偶数为" + oushuMaxCount + "个，在第"+(oushuIndex-9)+"个数据附近开始");
-        System.out.println("大号个数" + bigNum + ",小号个数"+littleNum);
-        System.out.println("奇数个数" + jishu + ",偶数个数"+oushu);
+        System.out.println("最高连续大号为" + bigMaxCount + "个，在第" + (maxIndex - 9) + "个数据附近开始");
+        System.out.println("最高连续小号为" + littleMaxCount + "个,在第" + (minIndex - 9) + "个数据附近开始");
+        System.out.println("最高连续奇数为" + jishuMaxCount + "个，在第" + (jishuIndex - 9) + "个数据附近开始");
+        System.out.println("最高连续偶数为" + oushuMaxCount + "个，在第" + (oushuIndex - 9) + "个数据附近开始");
+        System.out.println("大号个数" + bigNum + ",小号个数" + littleNum);
+        System.out.println("奇数个数" + jishu + ",偶数个数" + oushu);
     }
 
     public static void writeToExcel(){
@@ -203,7 +225,7 @@ public class Main {
         // 如果这里想使用03 则 传入excelType参数即可
         // 将List<String>转换为List<DataEntity>
         List<DataEntity> data = new ArrayList<>();
-        for (String line : NumList) {
+        for (String line : resultList) {
             String s = line.replaceAll("^\"|\"$", "");
             String[] parts = s.split(" ");
             data.add(new DataEntity(parts[0], parts[1], parts[2], parts[3], parts[4]));
@@ -214,8 +236,8 @@ public class Main {
     public static void MaxCount(){
         int count0=0, count1=0, count2=0, count3=0, count4=0, count5=0, count6=0, count7=0, count8=0, count9=0;
 
-        for (int i = 0; i < NumList.size(); i++) {
-            int number = Integer.parseInt(NumList.get(i).replaceAll("^\"|\"$", "").split(" ")[0]);
+        for (int i = 0; i < resultList.size(); i++) {
+            int number = Integer.parseInt(resultList.get(i).replaceAll("^\"|\"$", "").split(" ")[0]);
             switch(number){
                 case 0:
                     count0++;
@@ -316,24 +338,13 @@ public class Main {
             return -1;
         }
     }
-//
-//    public static void main(String[] args) {
-//
-//        for (int i = 1; i <= 100; i++) {
-//            String recentWinningData = getRecentResult(API_URL + i);
-//            parseJson(recentWinningData);
-//        }
-//        JsonList.add(resultList);
-//        getHosMonNumber();
-//        calculate(JsonList);
-//        writeToExcel();
-//        MaxCount();
-//    }
+
+
     private static void getMaxCount(List<Integer> countList) {
         int max = 0;
         for (int i = 0; i < countList.size(); i++) {
             int count = countList.get(i);
-            int size = NumList.size();
+            int size = resultList.size();
             double percent = ((double)count/size)*100;
             // 格式化输出，保留两位小数
             DecimalFormat df = new DecimalFormat("#.##");
